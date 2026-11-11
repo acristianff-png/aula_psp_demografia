@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="pt-BR"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Formatura 2027 · Professor</title>
+<link rel="stylesheet" href="style.css">
+</head><body>
+<div id="root"></div>
+<script src="config.js"></script><script src="shared.js"></script>
+<script>
+const {rpc,store,PLACES,V,FORA,ROUNDS,ABERTURA,DESAFIOS,STAGES,esc}=F27;
+const root=document.getElementById('root');
+let A=JSON.parse(store.sget('f27_prof')||'null'); // {code,pin}
+let st=null, curStage=null, extra={}, show={}, view='lado', wipeArm=false;
+
+function login(msg){
+  root.innerHTML=`<div class="wrap"><div class="hd">Formatura 2027 · Professor</div><h1>Painel de controle</h1>
+  <div class="card"><label class="f">Código da sala</label><input type="text" id="c" autocapitalize="characters" value="PSP2027">
+  <label class="f">PIN do professor</label><input type="password" id="p" autocomplete="off">
+  <p style="display:flex;gap:8px;margin-top:16px"><button class="btn" id="in">Entrar</button><button class="btn sec" id="new">Criar sala</button></p>
+  <p class="err" id="e">${esc(msg||'')}</p><p class="small mut">Criar sala define o PIN (mínimo 4 caracteres). O PIN não é recuperável.</p></div></div>`;
+  const get=()=>({code:document.getElementById('c').value.trim().toUpperCase(),pin:document.getElementById('p').value});
+  document.getElementById('in').onclick=async()=>{const a=get();try{await rpc('f27_t_status',{p_code:a.code,p_pin:a.pin});A=a;store.sset('f27_prof',JSON.stringify(a));start();}catch(e){document.getElementById('e').textContent=e.message;}};
+  document.getElementById('new').onclick=async()=>{const a=get();try{await rpc('f27_create_room',{p_code:a.code,p_pin:a.pin});A=a;store.sset('f27_prof',JSON.stringify(a));start();}catch(e){document.getElementById('e').textContent=e.message;}};
+}
+
+const idx=id=>STAGES.findIndex(s=>s.id===id);
+async function setStage(id){try{await rpc('f27_t_set_stage',{p_code:A.code,p_pin:A.pin,p_stage:id});show={};extra={};view='lado';wipeArm=false;await tick(true);}catch(e){alert(e.message);}}
+
+function shellHtml(){
+  let side='',g='';
+  STAGES.forEach((s,i)=>{ if(s.group!==g){g=s.group;side+=`<h4>${esc(g)}</h4>`;} side+=`<button class="st ${s.id===curStage?'cur':(idx(curStage)>i?'past':'')}" data-s="${s.id}">${esc(s.label)}</button>`;});
+  root.innerHTML=`<div class="pro"><aside class="side"><div class="hd">Formatura 2027</div>
+   <p class="small mut">Sala <b>${esc(A.code)}</b></p>
+   <p style="display:flex;gap:6px"><button class="btn sec" id="prev">◀</button><button class="btn" id="next" style="flex:1">Próxima etapa ▶</button></p>${side}
+   <h4>Fim da aula</h4><button class="st" id="csv">Exportar CSV (anônimo)</button>
+   <button class="st" id="wipe" style="color:var(--acc)">Apagar todos os dados</button>
+   <button class="st mut" id="out">Sair do painel</button></aside><main class="main" id="main"></main></div>`;
+  root.querySelectorAll('.st[data-s]').forEach(b=>b.onclick=()=>setStage(b.dataset.s));
+  document.getElementById('prev').onclick=()=>{const i=idx(curStage);if(i>0)setStage(STAGES[i-1].id);};
+  document.getElementById('next').onclick=()=>{const i=idx(curStage);if(i<STAGES.length-1)setStage(STAGES[i+1].id);};
+  document.getElementById('csv').onclick=exportCsv;
+  document.getElementById('wipe').onclick=async()=>{ if(!wipeArm){wipeArm=true;document.getElementById('wipe').textContent='Clique de novo para APAGAR TUDO';return;}
+    try{await rpc('f27_t_wipe',{p_code:A.code,p_pin:A.pin});store.sdel('f27_prof');A=null;login('Dados apagados. A sala foi removida.');}catch(e){alert(e.message);} };
+  document.getElementById('out').onclick=()=>{store.sdel('f27_prof');A=null;login();};
+}
+
+async function exportCsv(){
+  try{const rows=await rpc('f27_t_export',{p_code:A.code,p_pin:A.pin});
+   const cols=['rodada','momento','lugar','vinculo','fora_da_regra','mudou','o_que_pesou','depois_dos_2_anos','grau'];
+   const q=v=>v==null?'':'"'+String(v).replace(/"/g,'""')+'"';
+   const csv='﻿'+cols.join(',')+'\n'+rows.map(r=>cols.map(c=>q(r[c])).join(',')).join('\n');
+   const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));a.download='formatura2027_'+A.code+'.csv';a.click();
+  }catch(e){alert(e.message);}
+}
+
+function bars(obj,total,order){
+  const keys=order||Object.keys(obj).sort((a,b)=>obj[b]-obj[a]); const mx=Math.max(1,...keys.map(k=>obj[k]||0));
+  return keys.map(k=>`<div class="bar"><span class="l">${esc(k)}</span><span class="b" style="width:${(obj[k]||0)/mx*40}%"></span><b>${obj[k]||0}</b></div>`).join('')||'<p class="mut">Sem respostas ainda.</p>';
+}
+
+/* ---------- grade da revelação ---------- */
+function cellOf(pair,n){ // n=1|2
+  const f=pair['f'+n]; if(f) return {r:FORA,c:'—'};
+  const p=pair['p'+n]; if(!p) return null; return {r:p,c:pair['v'+n]};
+}
+function gridDims(round){
+  const R=ROUNDS[round]; const rows=R.places.slice(); if(R.fora) rows.push(FORA); return {rows,cols:R.fora?['Serviço obrigatório (2 anos)']:R.vincs.slice(),colKey:R.fora?['—']:R.vincs.slice()};
+}
+function normCell(c,round){ if(!c) return null; const R=ROUNDS[round]; if(R.fora){return {r:c.r,c:'—'};} return c; }
+function buildGrid(round,pairs,n,id){
+  const D=gridDims(round); const moved=p=>cellOf(p,1)&&cellOf(p,2)&&JSON.stringify(cellOf(p,1))!==JSON.stringify(cellOf(p,2));
+  const map={};
+  pairs.forEach(p=>{const c=normCell(cellOf(p,n),round); if(!c) return; const k=c.r+'||'+c.c; (map[k]=map[k]||[]).push(moved(p));});
+  let h=`<table class="grid" id="${id}"><tr><th></th>${D.cols.map(c=>`<th>${esc(c)}</th>`).join('')}</tr>`;
+  D.rows.forEach(r=>{h+=`<tr><th>${esc(r)}</th>${D.colKey.map((c,ci)=>{const arr=map[r+'||'+c]||[]; return `<td data-r="${esc(r)}" data-c="${esc(c)}">${arr.map(m=>`<span class="dot ${m?'mv':''}"></span>`).join('')}</td>`;}).join('')}</tr>`;});
+  return h+'</table>';
+}
+function drawArrows(round,pairs){
+  const t=document.getElementById('gA'); if(!t) return; const wrap=t.parentElement; const svg=wrap.querySelector('svg'); const W=wrap.getBoundingClientRect();
+  const center=(r,c)=>{const td=[...t.querySelectorAll('td')].find(x=>x.dataset.r===r&&x.dataset.c===c); if(!td) return null; const b=td.getBoundingClientRect(); return {x:b.left-W.left+b.width/2,y:b.top-W.top+b.height/2};};
+  const agg={}; pairs.forEach(p=>{const a=normCell(cellOf(p,1),round),b=normCell(cellOf(p,2),round); if(!a||!b) return; const k=a.r+'||'+a.c+'>>'+b.r+'||'+b.c; if(a.r===b.r&&a.c===b.c) return; (agg[k]=agg[k]||{a,b,n:0}).n++;});
+  let s=`<defs><marker id="ah" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 z" fill="currentColor"/></marker></defs>`;
+  Object.values(agg).forEach(g=>{const A1=center(g.a.r,g.a.c),B1=center(g.b.r,g.b.c); if(!A1||!B1) return;
+    s+=`<g style="color:var(--acc)"><line x1="${A1.x}" y1="${A1.y}" x2="${B1.x}" y2="${B1.y}" stroke="currentColor" stroke-width="${2+g.n*1.5}" opacity=".75" marker-end="url(#ah)"/><text x="${(A1.x+B1.x)/2}" y="${(A1.y+B1.y)/2-6}" fill="var(--ink)" font-size="15" font-weight="700" text-anchor="middle">${g.n}</text></g>`;});
+  svg.innerHTML=s;
+}
+function lbl(c){return c.r===FORA?FORA:c.r+' · '+c.c;}
+function revealHtml(round,data){
+  const pairs=data.pairs, n1=pairs.length, p2=pairs.filter(p=>cellOf(p,2)), nmv=p2.filter(p=>p.changed).length;
+  const flows={}; p2.forEach(p=>{const a=cellOf(p,1),b=cellOf(p,2); if(JSON.stringify(a)!==JSON.stringify(b)){const k=lbl(a)+'  →  '+lbl(b);flows[k]=(flows[k]||0)+1;}});
+  const reasons={}; p2.filter(p=>p.changed&&p.reason).forEach(p=>reasons[p.reason]=(reasons[p.reason]||0)+1);
+  const top=Object.entries(flows).sort((a,b)=>b[1]-a[1])[0];
+  let h=`<h2>${esc(ROUNDS[round].title)} · revelação</h2>
+  <p class="big"><b>${nmv}</b> de ${p2.length} mudaram de posição${top?` · maior movimento: <b>${esc(top[0])}</b> (${top[1]})`:''}.</p>
+  <p class="small mut">${n1} fizeram a escolha 1 · ${p2.length} fizeram a escolha 2 · ${data.alunos} na sala. Cada ponto é uma pessoa, sem nome. <span class="legend"><span class="dot mv"></span> quem mudou</span></p>
+  <div class="tabs"><button class="btn ${view==='lado'?'':'sec'}" data-v="lado">Lado a lado</button><button class="btn ${view==='setas'?'':'sec'}" data-v="setas">Setas</button><button class="btn sec" id="rf">Atualizar</button></div>`;
+  if(view==='lado') h+=`<div class="two"><div><div class="hd">Escolha 1 (antes do vídeo)</div>${buildGrid(round,pairs,1,'g1')}</div><div><div class="hd">Escolha 2 (depois do vídeo)</div>${buildGrid(round,p2,2,'g2')}</div></div>`;
+  else h+=`<div class="hd">Quem se moveu (espessura = quantidade)</div><div class="arrowwrap">${buildGrid(round,pairs,1,'gA')}<svg></svg></div>`;
+  if(Object.keys(flows).length) h+=`<h3 style="margin-top:20px">Movimentos</h3>${bars(flows)}`;
+  if(Object.keys(reasons).length) h+=`<h3 style="margin-top:20px">O que mais pesou (quem mudou)</h3>${bars(reasons)}`;
+  if(round===3){
+    const g=(n)=>{const o={};pairs.forEach(p=>{const v=p['g'+n];if(v)o[v]=(o[v]||0)+1;});return o;};
+    const dep={};pairs.forEach(p=>{if(p.d1)dep[p.d1]=(dep[p.d1]||0)+1;});
+    const fora1=pairs.filter(p=>p.f1).length,fora2=p2.filter(p=>p.f2).length;
+    h+=`<div class="two" style="margin-top:20px"><div><h3>Quanto a regra mexe no plano (antes)</h3>${bars(g(1),0,['1','2','3','4','5'])}</div><div><h3>Depois do vídeo</h3>${bars((()=>{const o={};p2.forEach(p=>{if(p.g2)o[p.g2]=(o[p.g2]||0)+1;});return o;})(),0,['1','2','3','4','5'])}</div></div>
+    <p class="big">Caminho fora da regra: <b>${fora1}</b> antes · <b>${fora2}</b> depois.</p><h3>Depois dos 2 anos (escolha 1)</h3>${bars(dep)}`;
+  }
+  return h;
+}
+
+/* ---------- conteúdo por etapa ---------- */
+const INSTR={
+ ficha:'Os alunos criam a ficha do médico que querem ser 5 anos depois de formados (8 min). Ficha sigilosa: você não a vê.',
+ vote0:'Pergunta de abertura: "Faltam médicos no Brasil?" O resultado só aparece no fechamento.',
+ fin_guia:'Pergunta-guia (3 min): "Olhando para as suas fichas e para as três rodadas: o que torna difícil ser médico hoje?"',
+ fin_plen:'Plenário (20 min). 1) O que vocês mais temem na profissão? Aparece nas escolhas? 2) Há contradições na turma? 3) Que escolha tem custo que o sistema não percebe? 4) Médicas ganham menos: quem se identificou? E os homens: problema de quem?\nEixos para completar, se a turma não chegar: vínculos e remuneração; carga de trabalho e saúde mental; gênero; formação; distribuição e fixação; tecnologias.',
+ fin_sintese:'Síntese (2 min): (1) a decisão individual e racional produz o padrão coletivo de concentração; (2) provimento traz, fixação exige carreira, formação, condições de vida e infraestrutura; (3) os desafios do trabalho médico são, em boa parte, os que vocês trouxeram nas fichas.',
+ fec_end:'Fim. Exporte o CSV se quiser e depois apague todos os dados.'
+};
+async function mainHtml(){
+  const id=curStage, s=STAGES[idx(id)]; let h=`<div class="hd">${esc(s.group)}</div><h1>${esc(s.label)}</h1>`;
+  const counter=(label)=>`<p class="mut">${label}</p><div class="bigcount" id="cnt">${st.responderam==null?'–':st.responderam}<span class="mut" style="font-size:2rem"> / ${st.alunos}</span></div>`;
+  let m;
+  if(id==='lobby'){
+    const url=location.origin+location.pathname.replace(/professor\.html$/,'')+'?sala='+encodeURIComponent(A.code);
+    return h+`<p class="big">Acesse no celular:</p><p><span class="url">${esc(url)}</span></p><p class="big">Código da sala: <b>${esc(A.code)}</b></p><div class="bigcount" id="cnt">${st.alunos}</div><p class="mut">na sala</p>`;
+  }
+  if(m=id.match(/^r(\d)_card$/)) return h+`<p class="cardtxt big" style="white-space:pre-line;max-width:900px">${esc(ROUNDS[m[1]].card)}</p><p class="mut">Próximo passo: abrir a escolha 1 (5 min).</p>`;
+  if(m=id.match(/^r(\d)_(c1|c2)$/)) return h+counter('responderam')+`<p class="mut">${m[2]==='c1'?'Escolha 1: secreta, antes do vídeo.':'Escolha 2: secreta, depois do vídeo. Não mostre o mapa ainda.'} Avance quando a maioria responder.</p>`;
+  if(m=id.match(/^r(\d)_video$/)){const R=ROUNDS[m[1]];return h+`<p class="big"><b>${esc(R.video)}</b></p><p class="big">${esc(R.videoMsg)}</p>`;}
+  if(m=id.match(/^r(\d)_rev$/)){ if(!extra.rev){try{extra.rev=await rpc('f27_t_reveal',{p_code:A.code,p_pin:A.pin,p_round:+m[1]});}catch(e){return h+'<p class="err">'+esc(e.message)+'</p>';}} return revealHtml(+m[1],extra.rev); }
+  if(id==='ficha') return h+counter('fichas salvas')+`<p class="mut">${INSTR.ficha}</p>`;
+  if(id==='vote0') return h+counter('votos')+`<p class="mut">${INSTR.vote0}</p>`;
+  if(id==='fin_fichas'){ if(!extra.f){extra.f=await rpc('f27_t_fichas',{p_code:A.code,p_pin:A.pin});} const f=extra.f;
+    return h+`<p class="mut">${f.n} fichas · resumo agregado e anônimo. Apenas contagens e frases embaralhadas.</p><div class="two"><div><h3>O que mais valorizam</h3>${bars(f.valoriza)}<h3 style="margin-top:20px">Quem pesa na decisão</h3>${bars(f.pesa)}<p class="big">Com compromisso financeiro relevante: <b>${f.divida_sim}</b></p></div><div><h3>Jornada desejada (1–5)</h3>${bars(f.jornada,0,['1','2','3','4','5'])}<h3 style="margin-top:20px">Áreas</h3>${bars(f.area)}</div></div><h3 style="margin-top:20px">O que temem (embaralhado)</h3><ul class="big">${f.teme.map(t=>`<li>${esc(t)}</li>`).join('')}</ul>`;}
+  if(id==='fin_prio'){ let r=''; if(show.res){const x=await rpc('f27_t_results',{p_code:A.code,p_pin:A.pin});r=bars(x.prio,0,DESAFIOS);}
+    return h+counter('votaram')+`<p style="margin:16px 0"><button class="btn" id="tg">${show.res?'Atualizar ranking':'Mostrar ranking'}</button></p>${r}`;}
+  if(id==='fec_vote'){ let r=''; if(show.res){const x=await rpc('f27_t_results',{p_code:A.code,p_pin:A.pin});r=`<div class="two"><div><h3>Abertura</h3>${bars(x.abertura,0,ABERTURA)}</div><div><h3>Agora</h3>${bars(x.final,0,ABERTURA)}</div></div>`;}
+    return h+counter('votos')+`<p style="margin:16px 0"><button class="btn" id="tg">${show.res?'Atualizar':'Mostrar abertura × agora'}</button></p>${r}`;}
+  if(id==='fec_frase'){ let r=''; if(show.res){const x=await rpc('f27_t_results',{p_code:A.code,p_pin:A.pin});r=`<ul class="big">${x.frases.map(t=>`<li>${esc(t)}</li>`).join('')}</ul>`;}
+    return h+counter('frases enviadas (anônimas)')+`<p style="margin:16px 0"><button class="btn" id="tg">${show.res?'Atualizar':'Mostrar frases (embaralhadas)'}</button></p>${r}<p class="small mut">Selecione 3–4 para ler em voz alta, se quiser.</p>`;}
+  return h+`<p class="cardtxt big" style="white-space:pre-line;max-width:900px">${esc(INSTR[id]||'')}</p>`;
+}
+
+let rendering=false;
+async function paint(){
+  if(rendering) return; rendering=true;
+  try{const el=document.getElementById('main'); el.innerHTML=await mainHtml();
+   const tg=document.getElementById('tg'); if(tg) tg.onclick=async()=>{show.res=true;await paint();};
+   document.querySelectorAll('.tabs [data-v]').forEach(b=>b.onclick=async()=>{view=b.dataset.v;await paint();});
+   const rf=document.getElementById('rf'); if(rf) rf.onclick=async()=>{extra={};await paint();};
+   if(view==='setas'&&extra.rev&&/_rev$/.test(curStage)){const r=+curStage[1]; requestAnimationFrame(()=>drawArrows(r,extra.rev.pairs));}
+  }finally{rendering=false;}
+}
+async function tick(force){
+  if(!A) return;
+  try{st=await rpc('f27_t_status',{p_code:A.code,p_pin:A.pin});}catch(e){if(/PIN/.test(e.message)){store.sdel('f27_prof');A=null;return login(e.message);} return;}
+  if(force||st.stage!==curStage||!document.getElementById('main')){curStage=st.stage;shellHtml();await paint();}
+  else{const c=document.getElementById('cnt'); if(c){ if(st.stage==='lobby') c.textContent=st.alunos; else c.innerHTML=(st.responderam==null?'–':st.responderam)+`<span class="mut" style="font-size:2rem"> / ${st.alunos}</span>`;}}
+}
+function start(){tick(true);}
+if(A) start(); else login();
+setInterval(()=>tick(false),2000);
+</script></body></html>

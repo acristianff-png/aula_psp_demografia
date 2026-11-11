@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="pt-BR"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Formatura 2027</title>
+<link rel="stylesheet" href="style.css">
+</head><body>
+<div class="wrap" id="app"></div>
+<script src="config.js"></script><script src="shared.js"></script>
+<script>
+const {rpc,store,PLACES,V,FORA,ROUNDS,ABERTURA,DESAFIOS,AREAS,PESA,VALORIZA,esc,placeByName}=F27;
+const $app=document.getElementById('app');
+let S=JSON.parse(store.get('f27_student')||'null'); // {id,token,room,nick}
+let me=null, lastKey=null, draft={}, busy=false, msg='';
+
+const qs=new URLSearchParams(location.search);
+
+function shell(inner){return `<div class="hd">Formatura 2027</div>${inner}`;}
+
+function renderLogin(){
+  const code=(qs.get('sala')||'').toUpperCase();
+  $app.innerHTML=shell(`<h1>Entrar na aula</h1>
+  <div class="card">
+   <label class="f" for="code">Código da sala</label><input type="text" id="code" value="${esc(code)}" autocapitalize="characters" autocomplete="off">
+   <label class="f" for="nick">Apelido (qualquer nome, não precisa ser o seu)</label><input type="text" id="nick" maxlength="30" autocomplete="off">
+   <p class="small mut">Os dados são usados só para esta aula. O professor não vê sua ficha nem liga seu apelido às suas escolhas.</p>
+   <button class="btn full" id="go">Entrar</button><p class="err" id="e"></p></div>`);
+  document.getElementById('go').onclick=async()=>{
+    const c=document.getElementById('code').value.trim().toUpperCase(), n=document.getElementById('nick').value.trim();
+    try{const r=await rpc('f27_join',{p_code:c,p_nick:n}); S={id:r.id,token:r.token,room:r.room,nick:n}; store.set('f27_student',JSON.stringify(S)); poll(true);}
+    catch(e){document.getElementById('e').textContent=e.message;}
+  };
+}
+
+async function poll(force){
+  if(!S) return renderLogin();
+  try{
+    me=await rpc('f27_me',{p_student:S.id,p_token:S.token});
+    const key=me.stage+'|'+(me.frase_done?1:0);
+    if(force||key!==lastKey){lastKey=key; draft={}; msg=''; render();}
+    else softUpdate();
+  }catch(e){
+    if(/inválido/.test(e.message)){store.del('f27_student');S=null;renderLogin();}
+  }
+}
+function softUpdate(){const c=document.getElementById('cnt'); if(c) c.textContent=me.alunos;}
+
+function getChoice(round,phase){return (me.choices||[]).find(c=>c.round===round&&c.phase===phase);}
+
+function waitCard(title,text){return shell(`<h1>${esc(title)}</h1><div class="card"><p class="cardtxt">${esc(text)}</p></div><p class="small mut">${esc(S.nick)} · ${me.alunos} na sala</p>`);}
+
+function render(){
+  const st=me.stage; let m;
+  if(st==='lobby') return $app.innerHTML=waitCard('Tudo certo!','Aguarde: o professor vai liberar a primeira etapa.');
+  if(st==='ficha') return renderFicha();
+  if(st==='vote0') return renderVote('abertura','Faltam médicos no Brasil?','Escolha a resposta que mais se aproxima da sua opinião agora.');
+  if(st==='fec_vote') return renderVote('final','Faltam médicos no Brasil?','Responda de novo. Vamos comparar com o início da aula.');
+  if(m=st.match(/^r(\d)_(card|c1|video|c2|rev)$/)){
+    const r=+m[1], k=m[2], R=ROUNDS[r];
+    if(k==='card') return $app.innerHTML=shell(`<div class="badge">${esc(R.title)}</div><h1>Regra desta rodada</h1><div class="card"><p class="cardtxt big">${esc(R.card)}</p></div><p class="mut">Aguarde o professor abrir a escolha.</p>`);
+    if(k==='video') return $app.innerHTML=shell(`<div class="badge">${esc(R.title)}</div><h1>Assistam ao vídeo</h1><div class="card"><p><b>${esc(R.video)}</b></p><p>${esc(R.videoMsg)}</p></div><p class="mut">Sua escolha 1 está guardada em sigilo. Em seguida você decide de novo.</p>`);
+    if(k==='rev') return $app.innerHTML=shell(`<div class="badge">${esc(R.title)}</div><h1>Olhem para o projetor</h1><div class="card"><p>O mapa da turma está sendo mostrado. Sem nomes, só posições.</p></div>`);
+    return renderChoice(r,k==='c1'?1:2);
+  }
+  if(st==='fin_prio') return renderPrio();
+  if(st==='fec_frase') return renderFrase();
+  const texts={fin_guia:['Discussão final','Olhando para as suas fichas e para as três rodadas: o que torna difícil ser médico hoje?'],fin_fichas:['Mapa das fichas','O professor mostra um resumo agregado e anônimo das fichas da turma.'],fin_plen:['Plenário','Conversa com a turma. Quando for votar nos desafios mais urgentes, a tela muda.'],fin_sintese:['Síntese','Escute a síntese do professor.'],fec_end:['Obrigado!','Fim da aula. Seus dados são apagados pelo professor.']};
+  const t=texts[st]||['Aguarde',''];
+  $app.innerHTML=waitCard(t[0],t[1]);
+}
+
+/* ---- ficha ---- */
+function renderFicha(){
+  const f=Object.assign({area:'',pesa:[],jornada:null,valoriza:[],teme:'',divida:''},me.ficha||{},draft.ficha||{});
+  draft.ficha=f;
+  const chips=(arr,key,max)=>arr.map(o=>`<span class="opt ${f[key].includes(o)?'on':''}" data-k="${key}" data-v="${esc(o)}" data-max="${max||99}">${esc(o)}</span>`).join('');
+  $app.innerHTML=shell(`<h1>Sua ficha</h1><p>Crie o médico que você pretende ser <b>5 anos depois de formado</b>. Só você vê esta ficha.</p>
+  <div class="card">
+   <label class="f">Área ou especialidade que almeja</label><select id="area"><option value="">Escolha</option>${AREAS.map(a=>`<option ${f.area===a?'selected':''}>${esc(a)}</option>`).join('')}</select>
+   <label class="f">Onde quer viver e quem pesa nessa decisão</label><div class="opts">${chips(PESA,'pesa')}</div>
+   <label class="f">Jornada desejada <span class="mut small">(1 = trabalho em tempo integral · 5 = muito tempo livre)</span></label>
+   <div class="opts">${[1,2,3,4,5].map(n=>`<span class="opt ${f.jornada===n?'on':''}" data-j="${n}">${n}</span>`).join('')}</div>
+   <label class="f">O que mais valoriza no trabalho <span class="mut small">(até 2)</span></label><div class="opts">${chips(VALORIZA,'valoriza',2)}</div>
+   <label class="f" for="teme">O que mais teme na profissão</label><textarea id="teme" rows="2" maxlength="200">${esc(f.teme)}</textarea>
+   <label class="f">Dívida ou compromisso financeiro relevante <span class="mut small">(FIES, financiamento, ajuda à família · opcional)</span></label>
+   <div class="opts">${['sim','não','prefiro não dizer'].map(o=>`<span class="opt ${f.divida===o?'on':''}" data-d="${o}">${o}</span>`).join('')}</div>
+   <p style="margin-top:18px"><button class="btn full" id="save">Salvar ficha</button></p><p id="m" class="${msg.startsWith('Erro')?'err':'ok'}">${esc(msg||(me.ficha?'Ficha salva. Você pode editar até o professor avançar.':''))}</p>
+  </div>`);
+  $app.querySelectorAll('.opt[data-k]').forEach(el=>el.onclick=()=>{const k=el.dataset.k,v=el.dataset.v,mx=+el.dataset.max,a=f[k]; const i=a.indexOf(v); if(i>=0)a.splice(i,1); else if(a.length<mx)a.push(v); readText(); renderFicha();});
+  $app.querySelectorAll('.opt[data-j]').forEach(el=>el.onclick=()=>{f.jornada=+el.dataset.j;readText();renderFicha();});
+  $app.querySelectorAll('.opt[data-d]').forEach(el=>el.onclick=()=>{f.divida=el.dataset.d;readText();renderFicha();});
+  function readText(){f.area=document.getElementById('area').value;f.teme=document.getElementById('teme').value;}
+  document.getElementById('save').onclick=async()=>{readText(); if(!f.area||!f.jornada||!f.valoriza.length){msg='Erro: preencha área, jornada e o que valoriza.';return renderFicha();}
+    try{await rpc('f27_save_ficha',{p_student:S.id,p_token:S.token,p_ficha:f}); me.ficha=f; msg='Ficha salva. Você pode editar até o professor avançar.';}catch(e){msg='Erro: '+e.message;} renderFicha();};
+}
+
+/* ---- votos ---- */
+function renderVote(kind,title,sub){
+  const cur=draft.v||(me.votes||{})[kind]||'';
+  $app.innerHTML=shell(`<h1>${esc(title)}</h1><p class="mut">${esc(sub)}</p><div>${ABERTURA.map(o=>`<span class="opt block ${cur===o?'on':''}" data-o="${esc(o)}">${esc(o)}</span>`).join('')}</div>
+  <button class="btn full" id="ok" ${cur?'':'disabled'}>Registrar voto</button><p id="m" class="ok">${(me.votes||{})[kind]?'Voto registrado: '+esc(me.votes[kind]):''}</p>`);
+  $app.querySelectorAll('.opt').forEach(el=>el.onclick=()=>{draft.v=el.dataset.o;renderVote(kind,title,sub);});
+  document.getElementById('ok').onclick=async()=>{try{await rpc('f27_vote',{p_student:S.id,p_token:S.token,p_kind:kind,p_opt:draft.v});me.votes=Object.assign(me.votes||{},{[kind]:draft.v});}catch(e){alert(e.message);}renderVote(kind,title,sub);};
+}
+
+/* ---- escolha na grade ---- */
+function renderChoice(r,phase){
+  const R=ROUNDS[r], prev=getChoice(r,phase), first=getChoice(r,1);
+  const showData = r>1 || phase===2;
+  if(!draft.init){draft.init=true; const base=prev||(phase===2?first:null)||{};
+    draft.place=base.fora?null:(base.place||null); draft.vinc=base.fora?null:(base.vinculo||null); draft.fora=!!base.fora;
+    draft.depois=(prev&&prev.depois)||(first&&first.depois)||null; draft.grau=(prev&&prev.grau)||null; draft.reason=(prev&&prev.reason)||null;}
+  const okCell=(p,v)=>!(R.only&&R.only[v])||R.only[v].includes(p);
+  const places=R.places.map(n=>placeByName(n));
+  const sel=draft.fora?'fora':(draft.place&&draft.vinc?draft.place+'|'+draft.vinc:null);
+  let h=`<div class="badge">${esc(R.title)}</div><h1>Escolha ${phase}</h1>
+   <p class="mut">${r===3?'Se esta regra existisse, onde você cumpriria os 2 anos?':'Onde e com que vínculo você estaria no primeiro ano?'} Toque em uma opção. Ninguém vê sua escolha até a revelação.</p>`;
+  if(phase===2&&first) h+=`<p class="small"><b>Sua escolha 1:</b> ${first.fora?esc(FORA):esc(first.place+' · '+first.vinculo)}</p>`;
+  places.forEach(p=>{
+    h+=`<div class="place"><h3>${esc(p.name)}</h3><div class="small mut">${esc(p.tag)}</div><p style="margin:.5em 0">${esc(p.desc)}</p>`;
+    if(showData) h+=`<div class="dado"><b>Dado do vídeo:</b> ${esc(p.dado)}</div>`;
+    h+=`<div class="opts" style="margin-top:10px">`;
+    R.vincs.forEach(v=>{const ok=okCell(p.name,v); h+=`<span class="opt ${sel===p.name+'|'+v?'on':''} ${ok?'':'dis'}" ${ok?`data-p="${esc(p.name)}" data-v="${esc(v)}"`:'style="opacity:.35;cursor:not-allowed"'}>${esc(v)}${ok?'':' (indisponível aqui)'}</span>`;});
+    h+=`</div></div>`;
+  });
+  if(R.fora) h+=`<div class="place"><h3>${esc(FORA)}</h3><p class="small mut" style="margin:.4em 0">Outro país, outra profissão, tentar mudar a regra…</p><div class="opts"><span class="opt ${draft.fora?'on':''}" data-fora="1">Eu buscaria um caminho fora da regra</span></div></div>`;
+  if(r===3){
+    h+=`<div class="card"><label class="f" style="margin-top:0">Depois dos 2 anos, o que você faria?</label><div class="opts">${R.depois.map(o=>`<span class="opt ${draft.depois===o?'on':''}" data-dep="${esc(o)}">${esc(o)}</span>`).join('')}</div>
+    <label class="f">Quanto essa regra mexe no seu plano de vida? <span class="mut small">(1 = nada · 5 = muda tudo)</span></label><div class="opts">${[1,2,3,4,5].map(n=>`<span class="opt ${draft.grau===n?'on':''}" data-g="${n}">${n}</span>`).join('')}</div></div>`;
+  }
+  const changed = phase===2 && first && !((draft.fora&&first.fora)||(!draft.fora&&!first.fora&&draft.place===first.place&&draft.vinc===first.vinculo));
+  if(phase===2){
+    h+=`<div class="card"><p><b>${changed?'Você mudou de posição.':'Você manteve a posição.'}</b> O que mais pesou na sua decisão agora?</p><div class="opts">${R.reasons.map(o=>`<span class="opt ${draft.reason===o?'on':''}" data-r="${esc(o)}">${esc(o)}</span>`).join('')}</div></div>`;
+  }
+  const ready=sel&&(r!==3||(draft.depois&&draft.grau))&&(phase===1||draft.reason);
+  h+=`<button class="btn full" id="ok" ${ready?'':'disabled'}>${prev?'Atualizar escolha':'Confirmar escolha'}</button><p id="m" class="${msg.startsWith('Erro')?'err':'ok'}">${esc(msg||(prev?'Escolha registrada. Você pode alterar até o professor fechar.':''))}</p>`;
+  $app.innerHTML=shell(h);
+  const redo=()=>{const y=window.scrollY;renderChoice(r,phase);window.scrollTo(0,y);};
+  $app.querySelectorAll('[data-p]').forEach(el=>el.onclick=()=>{draft.place=el.dataset.p;draft.vinc=el.dataset.v;draft.fora=false;redo();});
+  $app.querySelectorAll('[data-fora]').forEach(el=>el.onclick=()=>{draft.fora=true;draft.place=null;draft.vinc=null;redo();});
+  $app.querySelectorAll('[data-dep]').forEach(el=>el.onclick=()=>{draft.depois=el.dataset.dep;redo();});
+  $app.querySelectorAll('[data-g]').forEach(el=>el.onclick=()=>{draft.grau=+el.dataset.g;redo();});
+  $app.querySelectorAll('[data-r]').forEach(el=>el.onclick=()=>{draft.reason=el.dataset.r;redo();});
+  document.getElementById('ok').onclick=async()=>{
+    try{await rpc('f27_choose',{p_student:S.id,p_token:S.token,p_round:r,p_phase:phase,
+      p_place:draft.fora?null:draft.place,p_vinculo:draft.fora?null:draft.vinc,p_fora:!!draft.fora,
+      p_changed:phase===2?!!changed:null,p_reason:phase===2?draft.reason:null,p_depois:r===3?draft.depois:null,p_grau:r===3?draft.grau:null});
+      const row={round:r,phase,place:draft.fora?null:draft.place,vinculo:draft.fora?null:draft.vinc,fora:!!draft.fora,changed:phase===2?!!changed:null,reason:draft.reason,depois:draft.depois,grau:draft.grau};
+      me.choices=(me.choices||[]).filter(c=>!(c.round===r&&c.phase===phase)).concat(row); msg='Escolha registrada. Você pode alterar até o professor fechar.';}
+    catch(e){msg='Erro: '+e.message;} redo();};
+}
+
+/* ---- priorização ---- */
+function renderPrio(){
+  const cur=draft.p||me.prio||[]; draft.p=cur.slice();
+  $app.innerHTML=shell(`<h1>Desafios mais urgentes</h1><p class="mut">Escolha exatamente 3 desafios do trabalho médico que você considera mais urgentes.</p>
+  <div>${DESAFIOS.map(o=>`<span class="opt block ${draft.p.includes(o)?'on':''}" data-o="${esc(o)}">${esc(o)}</span>`).join('')}</div>
+  <p class="small mut">${draft.p.length} de 3 escolhidos</p>
+  <button class="btn full" id="ok" ${draft.p.length===3?'':'disabled'}>Registrar</button><p id="m" class="ok">${me.prio&&me.prio.length===3&&JSON.stringify(me.prio)===JSON.stringify(draft.p)?'Registrado.':''}</p>`);
+  $app.querySelectorAll('.opt').forEach(el=>el.onclick=()=>{const o=el.dataset.o,i=draft.p.indexOf(o); if(i>=0)draft.p.splice(i,1); else if(draft.p.length<3)draft.p.push(o); renderPrio();});
+  document.getElementById('ok').onclick=async()=>{try{await rpc('f27_prio_set',{p_student:S.id,p_token:S.token,p_items:draft.p});me.prio=draft.p.slice();}catch(e){alert(e.message);}renderPrio();};
+}
+
+/* ---- frase anônima ---- */
+function renderFrase(){
+  if(me.frase_done) return $app.innerHTML=shell(`<h1>Frase enviada</h1><div class="card"><p>Obrigado. Sua frase foi gravada <b>sem apelido e sem identificador</b>.</p></div>`);
+  $app.innerHTML=shell(`<h1>Uma frase para fechar</h1><p>O que mudou ou não na minha ficha depois de hoje?</p>
+  <div class="card"><textarea id="t" rows="4" maxlength="400" placeholder="Escreva aqui"></textarea>
+  <p class="small mut">Anônima: o app grava só o texto, sem apelido, sem identificador e sem horário. Não escreva nada que o identifique. O envio é definitivo.</p>
+  <button class="btn full" id="ok">Enviar frase</button><p id="m" class="err"></p></div>`);
+  document.getElementById('ok').onclick=async()=>{const t=document.getElementById('t').value;
+    try{await rpc('f27_frase',{p_student:S.id,p_token:S.token,p_texto:t});me.frase_done=true;renderFrase();}catch(e){document.getElementById('m').textContent=e.message;}};
+}
+
+if(!S) renderLogin(); else poll(true);
+setInterval(()=>{if(S)poll(false);},2500);
+</script></body></html>

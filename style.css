@@ -1,0 +1,53 @@
+:root{--bg:#f6f3ee;--card:#fff;--ink:#1d2433;--mut:#5d6677;--line:#ddd6ca;--acc:#b4442c;--acc2:#1f5d5a;--acc-ink:#fff;--soft:#efe8dc;--ok:#2f7a4d}
+@media (prefers-color-scheme:dark){:root{--bg:#161b26;--card:#1f2633;--ink:#eef0f4;--mut:#a3adbf;--line:#344055;--acc:#e8795f;--acc2:#58b3ad;--acc-ink:#161b26;--soft:#28324a;--ok:#6cc58e}}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 "Source Sans 3","Segoe UI",system-ui,sans-serif}
+h1,h2,h3{font-family:"Fraunces",Georgia,serif;line-height:1.15;margin:0 0 .5em}
+button,input,select,textarea{font:inherit;color:inherit}
+.wrap{max-width:640px;margin:0 auto;padding:16px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px;margin:0 0 14px}
+.mut{color:var(--mut)}.small{font-size:.88rem}
+.btn{display:inline-block;border:0;border-radius:10px;padding:12px 18px;background:var(--acc);color:var(--acc-ink);font-weight:700;cursor:pointer}
+.btn.sec{background:transparent;color:var(--ink);border:1px solid var(--line)}
+.btn.full{width:100%}.btn[disabled]{opacity:.45;cursor:not-allowed}
+input[type=text],input[type=password],select,textarea{width:100%;padding:11px 12px;border:1px solid var(--line);border-radius:10px;background:var(--bg)}
+label.f{display:block;font-weight:700;margin:14px 0 6px}
+.opts{display:flex;flex-wrap:wrap;gap:8px}
+.opt{border:1px solid var(--line);border-radius:999px;padding:8px 14px;background:var(--bg);cursor:pointer;user-select:none}
+.opt.on{background:var(--acc2);border-color:var(--acc2);color:var(--acc-ink);font-weight:700}
+.opt.block{display:block;border-radius:10px;width:100%;text-align:left;margin-bottom:8px}
+.badge{display:inline-block;background:var(--soft);border-radius:999px;padding:2px 10px;font-size:.8rem;color:var(--mut)}
+.hd{font-size:.8rem;text-transform:uppercase;letter-spacing:.08em;color:var(--acc);font-weight:700;margin-bottom:6px}
+.place{border:1px solid var(--line);border-radius:12px;padding:12px;margin-bottom:10px;background:var(--card)}
+.place h3{font-size:1.15rem;margin:0}
+.place .dado{margin-top:8px;padding:8px 10px;border-left:3px solid var(--acc);background:var(--soft);font-size:.92rem}
+.place.dis{opacity:.5}
+.cardtxt{white-space:pre-line}
+.ok{color:var(--ok);font-weight:700}
+.err{color:var(--acc);font-weight:700}
+.center{text-align:center}
+/* professor */
+.pro{display:grid;grid-template-columns:260px 1fr;min-height:100vh}
+.side{background:var(--card);border-right:1px solid var(--line);padding:14px;overflow:auto;max-height:100vh;position:sticky;top:0}
+.side h4{margin:14px 0 4px;font-size:.75rem;text-transform:uppercase;letter-spacing:.08em;color:var(--mut)}
+.st{display:block;width:100%;text-align:left;border:0;background:transparent;padding:6px 8px;border-radius:8px;cursor:pointer;font-size:.93rem}
+.st:hover{background:var(--soft)}.st.cur{background:var(--acc);color:var(--acc-ink);font-weight:700}.st.past{color:var(--mut)}
+.main{padding:28px 36px}
+.bigcount{font-family:"Fraunces",Georgia,serif;font-size:4.5rem;line-height:1}
+.bar{display:flex;align-items:center;gap:10px;margin:6px 0;font-size:1.1rem}
+.bar .b{height:22px;background:var(--acc2);border-radius:4px;min-width:2px}
+.bar .l{width:46%}
+table.grid{border-collapse:collapse;width:100%;table-layout:fixed}
+table.grid th,table.grid td{border:1px solid var(--line);padding:6px;vertical-align:top;font-size:.82rem}
+table.grid th{background:var(--soft)}
+table.grid td{height:62px;text-align:center;vertical-align:middle}
+.dot{display:inline-block;width:15px;height:15px;border-radius:50%;background:var(--acc2);margin:2px}
+.dot.mv{background:var(--acc)}
+.legend .dot{vertical-align:middle}
+.arrowwrap{position:relative}
+.arrowwrap svg{position:absolute;inset:0;pointer-events:none;width:100%;height:100%}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.tabs{display:flex;gap:6px;margin:10px 0}
+.big{font-size:1.5rem}
+.url{font-family:ui-monospace,monospace;font-size:1.6rem;background:var(--soft);padding:8px 14px;border-radius:10px;display:inline-block}
+@media(max-width:900px){.pro{grid-template-columns:1fr}.side{position:static;max-height:none}.two{grid-template-columns:1fr}.main{padding:16px}}
