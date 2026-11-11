@@ -5,7 +5,7 @@
 <link rel="stylesheet" href="style.css">
 </head><body>
 <div id="root"></div>
-<script src="config.js"></script><script src="shared.js"></script>
+<script src="config.js"></script><script src="shared.js"></script><script src="qr.js"></script>
 <script>
 const {rpc,store,PLACES,V,FORA,ROUNDS,ABERTURA,DESAFIOS,STAGES,esc}=F27;
 const root=document.getElementById('root');
@@ -122,8 +122,16 @@ async function mainHtml(){
   const counter=(label)=>`<p class="mut">${label}</p><div class="bigcount" id="cnt">${st.responderam==null?'–':st.responderam}<span class="mut" style="font-size:2rem"> / ${st.alunos}</span></div>`;
   let m;
   if(id==='lobby'){
-    const url=location.origin+location.pathname.replace(/professor\.html$/,'')+'?sala='+encodeURIComponent(A.code);
-    return h+`<p class="big">Acesse no celular:</p><p><span class="url">${esc(url)}</span></p><p class="big">Código da sala: <b>${esc(A.code)}</b></p><div class="bigcount" id="cnt">${st.alunos}</div><p class="mut">na sala</p>`;
+    const isFile=location.protocol==='file:';
+    let base=store.get('f27_base')||(isFile?'':location.origin+location.pathname.replace(/professor\.html$/,''));
+    if(base&&!base.endsWith('/')&&!/\?/.test(base)) base+='/';
+    const url=base?base+'?sala='+encodeURIComponent(A.code):'';
+    let qr='';
+    try{ if(url&&window.qrcode){const q=qrcode(0,'M');q.addData(url);q.make();qr=q.createSvgTag({cellSize:7,margin:2,scalable:true});} }catch(e){}
+    const warn=isFile?`<div class="card" style="max-width:760px"><p class="err">Você abriu este painel como arquivo do computador. Os celulares não conseguem abrir esse endereço.</p><p>Publique a pasta (GitHub Pages) e abra o painel pelo endereço publicado, ou digite aqui o endereço público do app:</p></div>`:'';
+    return h+warn+`<p style="max-width:760px"><input type="text" id="base" placeholder="https://seu-usuario.github.io/formatura2027/" value="${esc(store.get('f27_base')||'')}"> <button class="btn sec" id="sb" style="margin-top:8px">Usar este endereço</button></p>`+
+      (url?`<div style="display:flex;gap:32px;align-items:center;flex-wrap:wrap"><div><p class="big">Acesse no celular:</p><p><span class="url" style="word-break:break-all">${esc(url)}</span></p><p class="big">Código da sala: <b>${esc(A.code)}</b></p></div><div style="width:260px;height:260px;background:#fff;padding:6px;border-radius:12px">${qr}</div></div>`:'<p class="mut">Informe o endereço público para gerar o link e o QR code.</p>')+
+      `<div class="bigcount" id="cnt">${st.alunos}</div><p class="mut">na sala</p>`;
   }
   if(m=id.match(/^r(\d)_card$/)) return h+`<p class="cardtxt big" style="white-space:pre-line;max-width:900px">${esc(ROUNDS[m[1]].card)}</p><p class="mut">Próximo passo: abrir a escolha 1 (5 min).</p>`;
   if(m=id.match(/^r(\d)_(c1|c2)$/)) return h+counter('responderam')+`<p class="mut">${m[2]==='c1'?'Escolha 1: secreta, antes do vídeo.':'Escolha 2: secreta, depois do vídeo. Não mostre o mapa ainda.'} Avance quando a maioria responder.</p>`;
@@ -146,6 +154,7 @@ let rendering=false;
 async function paint(){
   if(rendering) return; rendering=true;
   try{const el=document.getElementById('main'); el.innerHTML=await mainHtml();
+   const sb=document.getElementById('sb'); if(sb) sb.onclick=async()=>{store.set('f27_base',document.getElementById('base').value.trim());await paint();};
    const tg=document.getElementById('tg'); if(tg) tg.onclick=async()=>{show.res=true;await paint();};
    document.querySelectorAll('.tabs [data-v]').forEach(b=>b.onclick=async()=>{view=b.dataset.v;await paint();});
    const rf=document.getElementById('rf'); if(rf) rf.onclick=async()=>{extra={};await paint();};
